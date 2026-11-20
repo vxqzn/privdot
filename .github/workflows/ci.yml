@@ -1,0 +1,38 @@
+name: privdot CI
+
+on:
+  push:
+    branches: [ main, "**" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  linux-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure clang-format is installed
+        run: command -v clang-format >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y clang-format)
+      - name: Check formatting
+        run: make format-check
+      - name: Build and run core unit tests (ASan + UBSan)
+        run: make test
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build and run core unit tests (MSVC)
+        run: |
+          cl /nologo /std:c++17 /EHsc /W4 /WX /Isrc src/core/consent_parser.cpp tests/test_core.cpp /Fe:test_core.exe
+          .\test_core.exe
+      - name: Build privdot.exe (MSVC)
+        run: |
+          cl /nologo /std:c++17 /O2 /Os /EHsc /W4 /WX /DUNICODE /D_UNICODE /Isrc src/core/consent_parser.cpp src/win32/consent_reader.cpp src/win32/consent_watcher.cpp src/win32/audio_mute.cpp src/win32/tray_app.cpp src/win32/main.cpp advapi32.lib ole32.lib shell32.lib user32.lib gdi32.lib /Fe:privdot.exe /link /SUBSYSTEM:WINDOWS
+      - name: Upload privdot.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: privdot-win64
+          path: privdot.exe
