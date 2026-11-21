@@ -43,6 +43,14 @@ std::string extract_display_name(std::string_view key_name, bool is_packaged) {
     return std::string(name);
 }
 
+std::string format_app_label(std::string_view display_name) {
+    if (display_name.size() > 4 &&
+        to_lower_ascii(display_name.substr(display_name.size() - 4)) == ".exe") {
+        return std::string(display_name.substr(0, display_name.size() - 4));
+    }
+    return std::string(display_name);
+}
+
 int64_t filetime_to_unix_seconds(uint64_t filetime) {
     if (filetime < kUnixEpochFileTime) {
         return 0;
@@ -92,6 +100,20 @@ std::string format_duration(uint64_t start_ft, uint64_t stop_ft) {
     return std::to_string(hrs) + "h " + two_digits(mins) + "m";
 }
 
+SensorKind recent_grace_mask(const IndicatorState& state, int64_t now_unix_sec,
+                             int64_t window_sec) {
+    SensorKind mask = SensorKind::None;
+    for (const auto& r : state.recent) {
+        const uint64_t latest = std::max(r.last_used_start_ft, r.last_used_stop_ft);
+        const int64_t latest_unix = filetime_to_unix_seconds(latest);
+        if (latest_unix > 0 && now_unix_sec >= latest_unix &&
+            (now_unix_sec - latest_unix) <= window_sec) {
+            mask |= r.sensor;
+        }
+    }
+    return mask;
+}
+
 IndicatorState
 build_indicator_state(std::vector<AccessRecord> records,
                       const std::unordered_set<std::string>& alive_process_names_lower,
@@ -132,6 +154,25 @@ build_indicator_state(std::vector<AccessRecord> records,
               [&](const AccessRecord& a, const AccessRecord& b) {
                   return last_activity(a) > last_activity(b);
               });
+
+    std::unordered_set<std::string> seen;
+    auto make_dedup_key = [](const AccessRecord& r) {
+        return to_lower_ascii(r.display_name) + "|" +
+               std::to_string(static_cast<unsigned>(static_cast<uint8_t>(r.sensor)));
+    };
+    auto deduplicate = [&seen, &make_dedup_key](std::vector<AccessRecord>& list) {
+        std::vector<AccessRecord> unique;
+        unique.reserve(list.size());
+        for (auto& r : list) {
+            if (seen.insert(make_dedup_key(r)).second) {
+                unique.push_back(std::move(r));
+            }
+        }
+        list = std::move(unique);
+    };
+
+    deduplicate(state.active);
+    deduplicate(state.recent);
 
     if (state.recent.size() > max_recent) {
         state.recent.resize(max_recent);

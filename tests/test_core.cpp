@@ -34,6 +34,11 @@ int main() {
           "WindowsCamera");
     CHECK(privdot::extract_display_name("SoundRecorder_123abc", true) == "SoundRecorder");
 
+    CHECK(privdot::format_app_label("Discord.exe") == "Discord");
+    CHECK(privdot::format_app_label("OBS64.EXE") == "OBS64");
+    CHECK(privdot::format_app_label("WindowsCamera") == "WindowsCamera");
+    CHECK(privdot::format_app_label(".exe") == ".exe");
+
     CHECK(privdot::filetime_to_unix_seconds(0) == 0);
     CHECK(privdot::filetime_to_unix_seconds(privdot::kUnixEpochFileTime) == 0);
     const int64_t jan_2026 = 1'767'225'600LL; // 2026-01-01 00:00:00 UTC
@@ -67,13 +72,16 @@ int main() {
     CHECK(privdot::format_duration(base, base + 125 * privdot::kTicksPerSecond) == "2m 05s");
     CHECK(privdot::format_duration(base, base + 3'840 * privdot::kTicksPerSecond) == "1h 04m");
 
-    // 6. Full state aggregation (active bitmask + ghost rejection + sorting + cap)
+    // 6. Full state aggregation (active bitmask + ghost rejection + deduplication + sorting + cap)
     auto ft = [](uint64_t sec) { return base + sec * privdot::kTicksPerSecond; };
     std::vector<privdot::AccessRecord> records = {
         {privdot::SensorKind::Mic, "C:#Program Files#Discord#Discord.exe", "", ft(300), 0, false},
+        {privdot::SensorKind::Mic, "C:#Users#Dennis#AppData#Local#Discord#app-1.0#Discord.exe", "",
+         ft(50), ft(90), false},
         {privdot::SensorKind::Cam, "Microsoft.WindowsCamera_8wekyb3d8bbwe", "", ft(500), ft(100),
          true},
         {privdot::SensorKind::Mic, "C:#Program Files#OBS#obs64.exe", "", ft(400), 0, false},
+        {privdot::SensorKind::Mic, "D:#Apps#OBS#obs64.exe", "", ft(150), ft(200), false},
         {privdot::SensorKind::Location, "C:#Windows#SearchHost.exe", "", ft(100), ft(250), false},
         {privdot::SensorKind::Location, "C:#Zoom#Zoom.exe", "", 0, 0, false},
     };
@@ -88,11 +96,26 @@ int main() {
     CHECK(full.active[1].display_name == "Discord.exe");
     CHECK(full.recent.size() == 2);
     CHECK(full.recent[0].display_name == "obs64.exe");
+    CHECK(full.recent[0].last_used_start_ft == ft(400));
     CHECK(full.recent[1].display_name == "SearchHost.exe");
 
     const auto capped = privdot::build_indicator_state(records, alive, 1);
     CHECK(capped.recent.size() == 1);
     CHECK(capped.recent[0].display_name == "obs64.exe");
+
+    // 7. Recent grace window (5m post-use ring)
+    const int64_t grace_now = privdot::filetime_to_unix_seconds(base) + 520; // obs64 stopped at 400 (120s ago), SearchHost at 250 (270s ago)
+    const privdot::SensorKind grace_all = privdot::recent_grace_mask(full, grace_now, 300);
+    CHECK(privdot::has_sensor(grace_all, privdot::SensorKind::Mic));
+    CHECK(privdot::has_sensor(grace_all, privdot::SensorKind::Location));
+
+    const int64_t grace_later = privdot::filetime_to_unix_seconds(base) + 600; // obs64 200s ago (in), SearchHost 350s ago (out)
+    const privdot::SensorKind grace_partial = privdot::recent_grace_mask(full, grace_later, 300);
+    CHECK(privdot::has_sensor(grace_partial, privdot::SensorKind::Mic));
+    CHECK(!privdot::has_sensor(grace_partial, privdot::SensorKind::Location));
+
+    const int64_t grace_expired = privdot::filetime_to_unix_seconds(base) + 801; // obs64 401s ago (out)
+    CHECK(privdot::recent_grace_mask(full, grace_expired, 300) == privdot::SensorKind::None);
 
     std::cout << "ok: all core parser tests passed.\n";
     return 0;

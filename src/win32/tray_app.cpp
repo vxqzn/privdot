@@ -23,9 +23,8 @@ constexpr UINT kTrayIconId = 1;
 
 constexpr UINT kCmdToggleMute = 1001;
 constexpr UINT kCmdToggleLocation = 1002;
-constexpr UINT kCmdRefresh = 1003;
-constexpr UINT kCmdToggleStartup = 1004;
-constexpr UINT kCmdExit = 1005;
+constexpr UINT kCmdToggleStartup = 1003;
+constexpr UINT kCmdExit = 1004;
 
 constexpr const wchar_t* kStartupRunKey = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr const wchar_t* kStartupValueName = L"privdot";
@@ -128,80 +127,118 @@ void set_startup_enabled(bool enable) {
     RegCloseKey(key);
 }
 
-// Renders a crisp, anti-aliased 32x32 ARGB privacy dot (or split pair) in memory.
-HICON create_dot_icon(SensorKind mask, bool mic_muted) {
-    static constexpr int kSize = 32;
+HBITMAP create_argb_dib(int size, uint32_t** out_pixels) {
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = kSize;
-    bi.bmiHeader.biHeight = -kSize; // top-down DIB
+    bi.bmiHeader.biWidth = size;
+    bi.bmiHeader.biHeight = -size; // top-down DIB
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     bi.bmiHeader.biCompression = BI_RGB;
 
     void* bits = nullptr;
     HDC screen_dc = GetDC(nullptr);
-    HBITMAP color_bmp = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HBITMAP bmp = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
     ReleaseDC(nullptr, screen_dc);
-    if (color_bmp == nullptr || bits == nullptr) {
+    if (bmp == nullptr || bits == nullptr) {
+        if (bmp != nullptr) {
+            DeleteObject(bmp);
+        }
+        *out_pixels = nullptr;
         return nullptr;
     }
 
     auto* pixels = static_cast<uint32_t*>(bits);
-    std::memset(pixels, 0, kSize * kSize * sizeof(uint32_t));
+    std::memset(pixels, 0, static_cast<size_t>(size) * static_cast<size_t>(size) * sizeof(uint32_t));
+    *out_pixels = pixels;
+    return bmp;
+}
 
-    auto blend_pixel = [pixels](int x, int y, Rgb c, float alpha) {
-        if (x < 0 || x >= kSize || y < 0 || y >= kSize || alpha <= 0.0f) {
-            return;
-        }
-        const float a = std::clamp(alpha, 0.0f, 1.0f);
-        const auto pa = static_cast<uint32_t>(a * 255.0f + 0.5f);
-        const auto pr = static_cast<uint32_t>(c.r * a + 0.5f);
-        const auto pg = static_cast<uint32_t>(c.g * a + 0.5f);
-        const auto pb = static_cast<uint32_t>(c.b * a + 0.5f);
-        pixels[y * kSize + x] = (pa << 24) | (pr << 16) | (pg << 8) | pb;
-    };
+void blend_pixel(uint32_t* pixels, int size, int x, int y, Rgb c, float alpha) {
+    if (x < 0 || x >= size || y < 0 || y >= size || alpha <= 0.0f) {
+        return;
+    }
+    const float a = std::clamp(alpha, 0.0f, 1.0f);
+    const auto pa = static_cast<uint32_t>(a * 255.0f + 0.5f);
+    const auto pr = static_cast<uint32_t>(c.r * a + 0.5f);
+    const auto pg = static_cast<uint32_t>(c.g * a + 0.5f);
+    const auto pb = static_cast<uint32_t>(c.b * a + 0.5f);
+    pixels[y * size + x] = (pa << 24) | (pr << 16) | (pg << 8) | pb;
+}
 
-    auto draw_disc = [&](float cx, float cy, float r, Rgb c, float inner_r = 0.0f) {
-        for (int y = 0; y < kSize; ++y) {
-            for (int x = 0; x < kSize; ++x) {
-                const float dx = (static_cast<float>(x) + 0.5f) - cx;
-                const float dy = (static_cast<float>(y) + 0.5f) - cy;
-                const float dist = std::sqrt(dx * dx + dy * dy);
-                float alpha = std::clamp(0.5f - (dist - r) / 1.25f, 0.0f, 1.0f);
-                if (inner_r > 0.0f) {
-                    const float inner = std::clamp(0.5f + (dist - inner_r) / 1.25f, 0.0f, 1.0f);
-                    alpha = std::min(alpha, inner);
-                }
-                if (alpha > 0.01f) {
-                    blend_pixel(x, y, c, alpha);
-                }
+void draw_disc(uint32_t* pixels, int size, float cx, float cy, float r, Rgb c,
+               float inner_r = 0.0f) {
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            const float dx = (static_cast<float>(x) + 0.5f) - cx;
+            const float dy = (static_cast<float>(y) + 0.5f) - cy;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            float alpha = std::clamp(0.5f - (dist - r) / 1.25f, 0.0f, 1.0f);
+            if (inner_r > 0.0f) {
+                const float inner = std::clamp(0.5f + (dist - inner_r) / 1.25f, 0.0f, 1.0f);
+                alpha = std::min(alpha, inner);
+            }
+            if (alpha > 0.01f) {
+                blend_pixel(pixels, size, x, y, c, alpha);
             }
         }
-    };
+    }
+}
 
-    std::vector<Rgb> active_colors;
+std::vector<Rgb> collect_colors(SensorKind mask) {
+    std::vector<Rgb> colors;
     if (has_sensor(mask, SensorKind::Cam)) {
-        active_colors.push_back(kColorCam);
+        colors.push_back(kColorCam);
     }
     if (has_sensor(mask, SensorKind::Mic)) {
-        active_colors.push_back(kColorMic);
+        colors.push_back(kColorMic);
     }
     if (has_sensor(mask, SensorKind::Location)) {
-        active_colors.push_back(kColorLoc);
+        colors.push_back(kColorLoc);
+    }
+    return colors;
+}
+
+HBITMAP create_badge_bitmap(Rgb c) {
+    static constexpr int kSize = 16;
+    uint32_t* pixels = nullptr;
+    HBITMAP bmp = create_argb_dib(kSize, &pixels);
+    if (bmp != nullptr && pixels != nullptr) {
+        draw_disc(pixels, kSize, 8.0f, 8.0f, 4.8f, c);
+    }
+    return bmp;
+}
+
+// Renders a crisp, anti-aliased 32x32 ARGB privacy dot (solid=active, colored ring=5m grace).
+HICON create_dot_icon(SensorKind active_mask, SensorKind recent_mask, bool mic_muted) {
+    static constexpr int kSize = 32;
+    uint32_t* pixels = nullptr;
+    HBITMAP color_bmp = create_argb_dib(kSize, &pixels);
+    if (color_bmp == nullptr || pixels == nullptr) {
+        return nullptr;
     }
 
-    if (active_colors.empty()) {
-        if (mic_muted) {
-            draw_disc(16.0f, 16.0f, 9.5f, kColorMuted, 5.5f);
+    const auto active_colors = collect_colors(active_mask);
+    const auto recent_colors = collect_colors(recent_mask);
+
+    if (!active_colors.empty()) {
+        if (active_colors.size() == 1) {
+            draw_disc(pixels, kSize, 16.0f, 16.0f, 10.5f, active_colors[0]);
         } else {
-            draw_disc(16.0f, 16.0f, 9.5f, kColorIdle, 6.2f);
+            draw_disc(pixels, kSize, 9.5f, 16.0f, 7.2f, active_colors[0]);
+            draw_disc(pixels, kSize, 22.5f, 16.0f, 7.2f, active_colors[1]);
         }
-    } else if (active_colors.size() == 1) {
-        draw_disc(16.0f, 16.0f, 10.5f, active_colors[0]);
+    } else if (!recent_colors.empty()) {
+        if (recent_colors.size() == 1) {
+            draw_disc(pixels, kSize, 16.0f, 16.0f, 10.0f, recent_colors[0], 6.0f);
+        } else {
+            draw_disc(pixels, kSize, 9.5f, 16.0f, 7.2f, recent_colors[0], 4.2f);
+            draw_disc(pixels, kSize, 22.5f, 16.0f, 7.2f, recent_colors[1], 4.2f);
+        }
+    } else if (mic_muted) {
+        draw_disc(pixels, kSize, 16.0f, 16.0f, 9.5f, kColorMuted, 5.5f);
     } else {
-        draw_disc(9.5f, 16.0f, 7.2f, active_colors[0]);
-        draw_disc(22.5f, 16.0f, 7.2f, active_colors[1]);
+        draw_disc(pixels, kSize, 16.0f, 16.0f, 9.5f, kColorIdle, 6.2f);
     }
 
     std::vector<uint8_t> mask_bits(kSize * kSize / 8, 0);
@@ -223,6 +260,17 @@ void copy_tooltip(wchar_t (&dst)[128], const std::wstring& text) {
     dst[n] = L'\0';
 }
 
+void append_badge_item(HMENU menu, const std::wstring& text, HBITMAP badge) {
+    MENUITEMINFOW mii{};
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_STRING | MIIM_ID | MIIM_STATE | (badge != nullptr ? MIIM_BITMAP : 0U);
+    mii.fState = MFS_ENABLED;
+    mii.wID = 0;
+    mii.hbmpItem = badge;
+    mii.dwTypeData = const_cast<LPWSTR>(text.c_str());
+    InsertMenuItemW(menu, static_cast<UINT>(GetMenuItemCount(menu)), TRUE, &mii);
+}
+
 } // namespace
 
 TrayApp::~TrayApp() {
@@ -232,11 +280,21 @@ TrayApp::~TrayApp() {
         DestroyIcon(current_icon_);
         current_icon_ = nullptr;
     }
+    for (HBITMAP* bmp : {&badge_mic_, &badge_cam_, &badge_loc_}) {
+        if (*bmp != nullptr) {
+            DeleteObject(*bmp);
+            *bmp = nullptr;
+        }
+    }
 }
 
 bool TrayApp::init(HINSTANCE instance) {
     instance_ = instance;
     enable_native_dark_menus();
+
+    badge_mic_ = create_badge_bitmap(kColorMic);
+    badge_cam_ = create_badge_bitmap(kColorCam);
+    badge_loc_ = create_badge_bitmap(kColorLoc);
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -267,6 +325,19 @@ int TrayApp::run_message_loop() {
         DispatchMessageW(&msg);
     }
     return static_cast<int>(msg.wParam);
+}
+
+HBITMAP TrayApp::badge_for_sensor(SensorKind s) const {
+    if (has_sensor(s, SensorKind::Mic)) {
+        return badge_mic_;
+    }
+    if (has_sensor(s, SensorKind::Cam)) {
+        return badge_cam_;
+    }
+    if (has_sensor(s, SensorKind::Location)) {
+        return badge_loc_;
+    }
+    return nullptr;
 }
 
 LRESULT CALLBACK TrayApp::wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -316,9 +387,6 @@ LRESULT TrayApp::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
             show_location_ = !show_location_;
             refresh_state();
             break;
-        case kCmdRefresh:
-            refresh_state();
-            break;
         case kCmdToggleStartup:
             set_startup_enabled(!is_startup_enabled());
             break;
@@ -347,7 +415,7 @@ LRESULT TrayApp::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
 
 void TrayApp::add_tray_icon() {
     if (current_icon_ == nullptr) {
-        current_icon_ = create_dot_icon(state_.active_mask, mic_muted_);
+        current_icon_ = create_dot_icon(state_.active_mask, recent_mask_, mic_muted_);
     }
     nid_ = {};
     nid_.cbSize = sizeof(nid_);
@@ -381,16 +449,20 @@ void TrayApp::refresh_state() {
     state_ = build_indicator_state(std::move(records), alive, 8);
     mic_muted_ = is_mic_muted().value_or(false);
 
-    // Run 15s fallback timer only while a sensor is active (0.00% CPU when idle).
-    if (!state_.active.empty() && !timer_active_) {
+    const int64_t now_unix = filetime_to_unix_seconds(current_filetime());
+    recent_mask_ = recent_grace_mask(state_, now_unix);
+
+    // Run 15s fallback timer only while active or in 5m post-use grace window (0.00% idle CPU).
+    const bool need_timer = !state_.active.empty() || recent_mask_ != SensorKind::None;
+    if (need_timer && !timer_active_) {
         SetTimer(hwnd_, kTimerActiveCheck, 15000, nullptr);
         timer_active_ = true;
-    } else if (state_.active.empty() && timer_active_) {
+    } else if (!need_timer && timer_active_) {
         KillTimer(hwnd_, kTimerActiveCheck);
         timer_active_ = false;
     }
 
-    HICON next_icon = create_dot_icon(state_.active_mask, mic_muted_);
+    HICON next_icon = create_dot_icon(state_.active_mask, recent_mask_, mic_muted_);
     if (next_icon != nullptr) {
         if (current_icon_ != nullptr) {
             DestroyIcon(current_icon_);
@@ -401,11 +473,17 @@ void TrayApp::refresh_state() {
 
     std::string tip = "privdot";
     if (!state_.active.empty()) {
-        tip += " - " + state_.active[0].display_name + " (" +
+        tip += " - " + format_app_label(state_.active[0].display_name) + " (" +
                sensor_label(state_.active[0].sensor) + ")";
         if (state_.active.size() > 1) {
             tip += " +" + std::to_string(state_.active.size() - 1) + " more";
         }
+    } else if (recent_mask_ != SensorKind::None && !state_.recent.empty()) {
+        const uint64_t latest =
+            std::max(state_.recent[0].last_used_start_ft, state_.recent[0].last_used_stop_ft);
+        tip += " - " + format_app_label(state_.recent[0].display_name) + " (" +
+               sensor_label(state_.recent[0].sensor) + ", " +
+               format_relative_time(filetime_to_unix_seconds(latest), now_unix) + ")";
     } else if (mic_muted_) {
         tip += " - mic muted";
     } else {
@@ -424,6 +502,12 @@ void TrayApp::show_menu() {
         return;
     }
 
+    MENUINFO mi{};
+    mi.cbSize = sizeof(mi);
+    mi.fMask = MIM_STYLE;
+    mi.dwStyle = MNS_CHECKORBMP;
+    SetMenuInfo(menu, &mi);
+
     const int64_t now_unix = filetime_to_unix_seconds(current_filetime());
 
     if (state_.active.empty()) {
@@ -432,9 +516,9 @@ void TrayApp::show_menu() {
         AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0, L"Active right now");
         for (const auto& r : state_.active) {
             const int64_t start_unix = filetime_to_unix_seconds(r.last_used_start_ft);
-            const std::string line = r.display_name + "  [" + sensor_label(r.sensor) + ", " +
-                                     format_relative_time(start_unix, now_unix) + "]";
-            AppendMenuW(menu, MF_STRING | MF_CHECKED, 0, utf8_to_wide(line).c_str());
+            const std::string line = format_app_label(r.display_name) + "\tactive \xc2\xb7 " +
+                                     format_relative_time(start_unix, now_unix);
+            append_badge_item(menu, utf8_to_wide(line), badge_for_sensor(r.sensor));
         }
     }
 
@@ -446,13 +530,13 @@ void TrayApp::show_menu() {
         for (const auto& r : state_.recent) {
             const uint64_t latest = std::max(r.last_used_start_ft, r.last_used_stop_ft);
             const int64_t latest_unix = filetime_to_unix_seconds(latest);
-            std::string line = r.display_name + "  [" + sensor_label(r.sensor) + ", " +
+            std::string line = format_app_label(r.display_name) + "\t" +
                                format_relative_time(latest_unix, now_unix);
-            if (r.last_used_stop_ft > r.last_used_start_ft) {
-                line += ", " + format_duration(r.last_used_start_ft, r.last_used_stop_ft);
+            if (r.last_used_stop_ft > r.last_used_start_ft &&
+                (r.last_used_stop_ft - r.last_used_start_ft) >= kTicksPerSecond) {
+                line += " \xc2\xb7 " + format_duration(r.last_used_start_ft, r.last_used_stop_ft);
             }
-            line += "]";
-            AppendMenuW(menu, MF_STRING, 0, utf8_to_wide(line).c_str());
+            append_badge_item(menu, utf8_to_wide(line), badge_for_sensor(r.sensor));
         }
     }
 
@@ -461,7 +545,6 @@ void TrayApp::show_menu() {
                 L"Mute microphone");
     AppendMenuW(menu, MF_STRING | (show_location_ ? MF_CHECKED : MF_UNCHECKED), kCmdToggleLocation,
                 L"Show location activity");
-    AppendMenuW(menu, MF_STRING, kCmdRefresh, L"Refresh now");
     AppendMenuW(menu, MF_STRING | (is_startup_enabled() ? MF_CHECKED : MF_UNCHECKED),
                 kCmdToggleStartup, L"Start with Windows");
 

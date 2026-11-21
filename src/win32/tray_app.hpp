@@ -35,15 +35,20 @@ class TrayApp {
     void remove_tray_icon();
     void refresh_state();
     void show_menu();
+    HBITMAP badge_for_sensor(SensorKind s) const;
 
     HINSTANCE instance_{nullptr};
     HWND hwnd_{nullptr};
     NOTIFYICONDATAW nid_{};
     HICON current_icon_{nullptr};
+    HBITMAP badge_mic_{nullptr};
+    HBITMAP badge_cam_{nullptr};
+    HBITMAP badge_loc_{nullptr};
     UINT taskbar_created_msg_{0};
 
     ConsentWatcher watcher_;
     IndicatorState state_;
+    SensorKind recent_mask_{SensorKind::None};
     bool mic_muted_{false};
     bool show_location_{true};
     bool timer_active_{false};
