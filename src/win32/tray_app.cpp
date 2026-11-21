@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <cwchar>
 #include <string>
@@ -38,6 +39,7 @@ struct Rgb {
 constexpr Rgb kColorMic{255, 159, 10};   // warm orange
 constexpr Rgb kColorCam{48, 209, 88};    // calm green
 constexpr Rgb kColorLoc{10, 132, 255};   // clean blue
+constexpr Rgb kColorWhite{255, 255, 255};
 constexpr Rgb kColorMuted{215, 75, 75};  // muted red
 constexpr Rgb kColorIdle{165, 170, 180}; // soft neutral grey
 
@@ -49,6 +51,23 @@ template <typename Fn> Fn load_proc(HMODULE mod, LPCSTR name) {
         std::memcpy(&fn, &raw, sizeof(fn));
     }
     return fn;
+}
+
+void enable_dpi_awareness() {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 == nullptr) {
+        return;
+    }
+    using SetProcessDpiAwarenessContextFn = BOOL(WINAPI*)(HANDLE);
+    if (auto set_dpi =
+            load_proc<SetProcessDpiAwarenessContextFn>(user32, "SetProcessDpiAwarenessContext")) {
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (-4) for crisp HiDPI icons & menus.
+        set_dpi(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)));
+    }
+}
+
+int native_icon_size() {
+    return std::clamp(GetSystemMetrics(SM_CXSMICON), 16, 64);
 }
 
 // Enables native Windows 10/11 dark Fluent theme on standard Win32 popup menus.
@@ -93,6 +112,19 @@ std::string sensor_label(SensorKind s) {
         return "location";
     }
     return "sensor";
+}
+
+Rgb sensor_color(SensorKind s) {
+    if (has_sensor(s, SensorKind::Mic)) {
+        return kColorMic;
+    }
+    if (has_sensor(s, SensorKind::Cam)) {
+        return kColorCam;
+    }
+    if (has_sensor(s, SensorKind::Location)) {
+        return kColorLoc;
+    }
+    return kColorIdle;
 }
 
 bool is_startup_enabled() {
@@ -154,35 +186,59 @@ HBITMAP create_argb_dib(int size, uint32_t** out_pixels) {
     return bmp;
 }
 
-void blend_pixel(uint32_t* pixels, int size, int x, int y, Rgb c, float alpha) {
-    if (x < 0 || x >= size || y < 0 || y >= size || alpha <= 0.0f) {
-        return;
-    }
-    const float a = std::clamp(alpha, 0.0f, 1.0f);
-    const auto pa = static_cast<uint32_t>(a * 255.0f + 0.5f);
-    const auto pr = static_cast<uint32_t>(c.r * a + 0.5f);
-    const auto pg = static_cast<uint32_t>(c.g * a + 0.5f);
-    const auto pb = static_cast<uint32_t>(c.b * a + 0.5f);
-    pixels[y * size + x] = (pa << 24) | (pr << 16) | (pg << 8) | pb;
+uint32_t pack_premultiplied(float r_sum, float g_sum, float b_sum, float a_sum, int samples) {
+    const float inv = 1.0f / static_cast<float>(samples);
+    const auto pa = static_cast<uint32_t>(std::clamp(a_sum * inv * 255.0f, 0.0f, 255.0f) + 0.5f);
+    const auto pr = static_cast<uint32_t>(std::clamp(r_sum * inv, 0.0f, 255.0f) + 0.5f);
+    const auto pg = static_cast<uint32_t>(std::clamp(g_sum * inv, 0.0f, 255.0f) + 0.5f);
+    const auto pb = static_cast<uint32_t>(std::clamp(b_sum * inv, 0.0f, 255.0f) + 0.5f);
+    return (pa << 24) | (pr << 16) | (pg << 8) | pb;
 }
 
-void draw_disc(uint32_t* pixels, int size, float cx, float cy, float r, Rgb c,
-               float inner_r = 0.0f) {
-    for (int y = 0; y < size; ++y) {
-        for (int x = 0; x < size; ++x) {
-            const float dx = (static_cast<float>(x) + 0.5f) - cx;
-            const float dy = (static_cast<float>(y) + 0.5f) - cy;
-            const float dist = std::sqrt(dx * dx + dy * dy);
-            float alpha = std::clamp(0.5f - (dist - r) / 1.25f, 0.0f, 1.0f);
-            if (inner_r > 0.0f) {
-                const float inner = std::clamp(0.5f + (dist - inner_r) / 1.25f, 0.0f, 1.0f);
-                alpha = std::min(alpha, inner);
-            }
-            if (alpha > 0.01f) {
-                blend_pixel(pixels, size, x, y, c, alpha);
-            }
-        }
+float tri_sign(float px, float py, float ax, float ay, float bx, float by) {
+    return (px - bx) * (ay - by) - (ax - bx) * (py - by);
+}
+
+bool point_in_triangle(float px, float py, float ax, float ay, float bx, float by, float cx,
+                       float cy) {
+    const float d1 = tri_sign(px, py, ax, ay, bx, by);
+    const float d2 = tri_sign(px, py, bx, by, cx, cy);
+    const float d3 = tri_sign(px, py, cx, cy, ax, ay);
+    const bool has_neg = (d1 < 0.0f) || (d2 < 0.0f) || (d3 < 0.0f);
+    const bool has_pos = (d1 > 0.0f) || (d2 > 0.0f) || (d3 > 0.0f);
+    return !(has_neg && has_pos);
+}
+
+bool in_glyph(SensorKind sensor, float u, float v) {
+    if (has_sensor(sensor, SensorKind::Mic)) {
+        // Capsule head centered on x=0
+        const bool mid = std::fabs(u) <= 0.15f && v >= -0.25f && v <= -0.09f;
+        const bool top = v < -0.25f && (u * u + (v + 0.25f) * (v + 0.25f)) <= 0.15f * 0.15f;
+        const bool bot = v > -0.09f && (u * u + (v + 0.09f) * (v + 0.09f)) <= 0.15f * 0.15f;
+        // Cradle U-arc, stem, and stand bar
+        const float cradle_r = std::sqrt(u * u + (v + 0.06f) * (v + 0.06f));
+        const bool cradle = v >= -0.06f && cradle_r >= 0.24f && cradle_r <= 0.34f;
+        const bool stem = std::fabs(u) <= 0.055f && v >= 0.26f && v <= 0.48f;
+        const bool base = std::fabs(u) <= 0.19f && v >= 0.44f && v <= 0.53f;
+        return mid || top || bot || cradle || stem || base;
     }
+
+    if (has_sensor(sensor, SensorKind::Cam)) {
+        // Rounded camera body on left + lens trapezoid on right
+        const float rx = std::max(0.0f, std::fabs(u + 0.15f) - 0.24f);
+        const float ry = std::max(0.0f, std::fabs(v) - 0.18f);
+        const bool body = (rx * rx + ry * ry) <= 0.07f * 0.07f;
+        const bool lens = u >= 0.21f && u <= 0.50f && std::fabs(v) <= 0.11f + (u - 0.21f) * 0.62f;
+        return body || lens;
+    }
+
+    if (has_sensor(sensor, SensorKind::Location)) {
+        // NE diagonal location arrow
+        return point_in_triangle(u, v, 0.45f, -0.45f, -0.47f, -0.05f, -0.03f, 0.03f) ||
+               point_in_triangle(u, v, 0.45f, -0.45f, -0.03f, 0.03f, 0.05f, 0.47f);
+    }
+
+    return false;
 }
 
 std::vector<Rgb> collect_colors(SensorKind mask) {
@@ -199,21 +255,66 @@ std::vector<Rgb> collect_colors(SensorKind mask) {
     return colors;
 }
 
-HBITMAP create_badge_bitmap(Rgb c) {
-    static constexpr int kSize = 16;
+// 4x4 supersampled colored badge with crisp white iOS sensor glyph at native menu DPI.
+HBITMAP create_badge_bitmap(SensorKind sensor, int size) {
     uint32_t* pixels = nullptr;
-    HBITMAP bmp = create_argb_dib(kSize, &pixels);
-    if (bmp != nullptr && pixels != nullptr) {
-        draw_disc(pixels, kSize, 8.0f, 8.0f, 4.8f, c);
+    HBITMAP bmp = create_argb_dib(size, &pixels);
+    if (bmp == nullptr || pixels == nullptr) {
+        return bmp;
+    }
+
+    static constexpr int kSub = 4;
+    const Rgb bg = sensor_color(sensor);
+    const float inv_size = 2.0f / static_cast<float>(size);
+
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            float r_sum = 0.0f;
+            float g_sum = 0.0f;
+            float b_sum = 0.0f;
+            float a_sum = 0.0f;
+
+            for (int sy = 0; sy < kSub; ++sy) {
+                const float v = (static_cast<float>(y) + (static_cast<float>(sy) + 0.5f) * 0.25f) *
+                                    inv_size -
+                                1.0f;
+                for (int sx = 0; sx < kSub; ++sx) {
+                    const float u =
+                        (static_cast<float>(x) + (static_cast<float>(sx) + 0.5f) * 0.25f) *
+                            inv_size -
+                        1.0f;
+                    if (u * u + v * v <= 0.88f * 0.88f) {
+                        const Rgb c = in_glyph(sensor, u, v) ? kColorWhite : bg;
+                        r_sum += static_cast<float>(c.r);
+                        g_sum += static_cast<float>(c.g);
+                        b_sum += static_cast<float>(c.b);
+                        a_sum += 1.0f;
+                    }
+                }
+            }
+
+            if (a_sum > 0.0f) {
+                pixels[y * size + x] = pack_premultiplied(r_sum, g_sum, b_sum, a_sum, kSub * kSub);
+            }
+        }
     }
     return bmp;
 }
 
-// Renders a crisp, anti-aliased 32x32 ARGB privacy dot (solid=active, colored ring=5m grace).
-HICON create_dot_icon(SensorKind active_mask, SensorKind recent_mask, bool mic_muted) {
-    static constexpr int kSize = 32;
+bool hit_disc(float u, float v, float cx, float cy, float outer_r, float inner_r) {
+    const float dx = u - cx;
+    const float dy = v - cy;
+    const float d2 = dx * dx + dy * dy;
+    if (d2 > outer_r * outer_r) {
+        return false;
+    }
+    return inner_r <= 0.0f || d2 >= inner_r * inner_r;
+}
+
+// 4x4 supersampled HiDPI tray dot (solid=active, colored ring=5m grace).
+HICON create_dot_icon(SensorKind active_mask, SensorKind recent_mask, bool mic_muted, int size) {
     uint32_t* pixels = nullptr;
-    HBITMAP color_bmp = create_argb_dib(kSize, &pixels);
+    HBITMAP color_bmp = create_argb_dib(size, &pixels);
     if (color_bmp == nullptr || pixels == nullptr) {
         return nullptr;
     }
@@ -221,28 +322,79 @@ HICON create_dot_icon(SensorKind active_mask, SensorKind recent_mask, bool mic_m
     const auto active_colors = collect_colors(active_mask);
     const auto recent_colors = collect_colors(recent_mask);
 
-    if (!active_colors.empty()) {
-        if (active_colors.size() == 1) {
-            draw_disc(pixels, kSize, 16.0f, 16.0f, 10.5f, active_colors[0]);
-        } else {
-            draw_disc(pixels, kSize, 9.5f, 16.0f, 7.2f, active_colors[0]);
-            draw_disc(pixels, kSize, 22.5f, 16.0f, 7.2f, active_colors[1]);
+    static constexpr int kSub = 4;
+    const float inv_size = 2.0f / static_cast<float>(size);
+
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            float r_sum = 0.0f;
+            float g_sum = 0.0f;
+            float b_sum = 0.0f;
+            float a_sum = 0.0f;
+
+            for (int sy = 0; sy < kSub; ++sy) {
+                const float v = (static_cast<float>(y) + (static_cast<float>(sy) + 0.5f) * 0.25f) *
+                                    inv_size -
+                                1.0f;
+                for (int sx = 0; sx < kSub; ++sx) {
+                    const float u =
+                        (static_cast<float>(x) + (static_cast<float>(sx) + 0.5f) * 0.25f) *
+                            inv_size -
+                        1.0f;
+
+                    bool hit = false;
+                    Rgb c{};
+
+                    if (!active_colors.empty()) {
+                        if (active_colors.size() == 1) {
+                            hit = hit_disc(u, v, 0.0f, 0.0f, 0.66f, 0.0f);
+                            c = active_colors[0];
+                        } else if (hit_disc(u, v, -0.40f, 0.0f, 0.45f, 0.0f)) {
+                            hit = true;
+                            c = active_colors[0];
+                        } else if (hit_disc(u, v, 0.40f, 0.0f, 0.45f, 0.0f)) {
+                            hit = true;
+                            c = active_colors[1];
+                        }
+                    } else if (!recent_colors.empty()) {
+                        if (recent_colors.size() == 1) {
+                            hit = hit_disc(u, v, 0.0f, 0.0f, 0.64f, 0.38f);
+                            c = recent_colors[0];
+                        } else if (hit_disc(u, v, -0.40f, 0.0f, 0.45f, 0.26f)) {
+                            hit = true;
+                            c = recent_colors[0];
+                        } else if (hit_disc(u, v, 0.40f, 0.0f, 0.45f, 0.26f)) {
+                            hit = true;
+                            c = recent_colors[1];
+                        }
+                    } else if (mic_muted) {
+                        hit = hit_disc(u, v, 0.0f, 0.0f, 0.60f, 0.35f);
+                        c = kColorMuted;
+                    } else {
+                        hit = hit_disc(u, v, 0.0f, 0.0f, 0.60f, 0.39f);
+                        c = kColorIdle;
+                    }
+
+                    if (hit) {
+                        r_sum += static_cast<float>(c.r);
+                        g_sum += static_cast<float>(c.g);
+                        b_sum += static_cast<float>(c.b);
+                        a_sum += 1.0f;
+                    }
+                }
+            }
+
+            if (a_sum > 0.0f) {
+                pixels[y * size + x] = pack_premultiplied(r_sum, g_sum, b_sum, a_sum, kSub * kSub);
+            }
         }
-    } else if (!recent_colors.empty()) {
-        if (recent_colors.size() == 1) {
-            draw_disc(pixels, kSize, 16.0f, 16.0f, 10.0f, recent_colors[0], 6.0f);
-        } else {
-            draw_disc(pixels, kSize, 9.5f, 16.0f, 7.2f, recent_colors[0], 4.2f);
-            draw_disc(pixels, kSize, 22.5f, 16.0f, 7.2f, recent_colors[1], 4.2f);
-        }
-    } else if (mic_muted) {
-        draw_disc(pixels, kSize, 16.0f, 16.0f, 9.5f, kColorMuted, 5.5f);
-    } else {
-        draw_disc(pixels, kSize, 16.0f, 16.0f, 9.5f, kColorIdle, 6.2f);
     }
 
-    std::vector<uint8_t> mask_bits(kSize * kSize / 8, 0);
-    HBITMAP mask_bmp = CreateBitmap(kSize, kSize, 1, 1, mask_bits.data());
+    // GDI 1bpp bitmap stride must be WORD-aligned (safe for non-16-multiple sizes like 20x20).
+    const size_t row_bytes = static_cast<size_t>(((size + 15) / 16) * 2);
+    std::vector<uint8_t> mask_bits(row_bytes * static_cast<size_t>(size), 0);
+    HBITMAP mask_bmp = CreateBitmap(size, size, 1, 1, mask_bits.data());
+
     ICONINFO ii{};
     ii.fIcon = TRUE;
     ii.hbmMask = mask_bmp;
@@ -290,11 +442,13 @@ TrayApp::~TrayApp() {
 
 bool TrayApp::init(HINSTANCE instance) {
     instance_ = instance;
+    enable_dpi_awareness();
     enable_native_dark_menus();
 
-    badge_mic_ = create_badge_bitmap(kColorMic);
-    badge_cam_ = create_badge_bitmap(kColorCam);
-    badge_loc_ = create_badge_bitmap(kColorLoc);
+    const int badge_px = native_icon_size();
+    badge_mic_ = create_badge_bitmap(SensorKind::Mic, badge_px);
+    badge_cam_ = create_badge_bitmap(SensorKind::Cam, badge_px);
+    badge_loc_ = create_badge_bitmap(SensorKind::Location, badge_px);
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -415,7 +569,8 @@ LRESULT TrayApp::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
 
 void TrayApp::add_tray_icon() {
     if (current_icon_ == nullptr) {
-        current_icon_ = create_dot_icon(state_.active_mask, recent_mask_, mic_muted_);
+        current_icon_ = create_dot_icon(state_.active_mask, recent_mask_, mic_muted_,
+                                        native_icon_size());
     }
     nid_ = {};
     nid_.cbSize = sizeof(nid_);
@@ -462,7 +617,8 @@ void TrayApp::refresh_state() {
         timer_active_ = false;
     }
 
-    HICON next_icon = create_dot_icon(state_.active_mask, recent_mask_, mic_muted_);
+    HICON next_icon =
+        create_dot_icon(state_.active_mask, recent_mask_, mic_muted_, native_icon_size());
     if (next_icon != nullptr) {
         if (current_icon_ != nullptr) {
             DestroyIcon(current_icon_);
@@ -516,7 +672,8 @@ void TrayApp::show_menu() {
         AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0, L"Active right now");
         for (const auto& r : state_.active) {
             const int64_t start_unix = filetime_to_unix_seconds(r.last_used_start_ft);
-            const std::string line = format_app_label(r.display_name) + "\tactive \xc2\xb7 " +
+            const std::string line = format_app_label(r.display_name) + "\t" +
+                                     sensor_label(r.sensor) + " \xc2\xb7 active \xc2\xb7 " +
                                      format_relative_time(start_unix, now_unix);
             append_badge_item(menu, utf8_to_wide(line), badge_for_sensor(r.sensor));
         }
@@ -531,6 +688,7 @@ void TrayApp::show_menu() {
             const uint64_t latest = std::max(r.last_used_start_ft, r.last_used_stop_ft);
             const int64_t latest_unix = filetime_to_unix_seconds(latest);
             std::string line = format_app_label(r.display_name) + "\t" +
+                               sensor_label(r.sensor) + " \xc2\xb7 " +
                                format_relative_time(latest_unix, now_unix);
             if (r.last_used_stop_ft > r.last_used_start_ft &&
                 (r.last_used_stop_ft - r.last_used_start_ft) >= kTicksPerSecond) {
