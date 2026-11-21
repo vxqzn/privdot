@@ -3,7 +3,7 @@ CXXFLAGS  := -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror
 SANFLAGS  := -g -fsanitize=address,undefined -fno-omit-frame-pointer
 
 WIN_CXX   := x86_64-w64-mingw32-g++
-WIN_FLAGS := -std=c++17 -Os -s -Wall -Wextra -Wpedantic -Werror -ffunction-sections -fdata-sections -static -Wl,--gc-sections
+WIN_FLAGS := -std=c++17 -Os -s -Wall -Wextra -Wpedantic -Werror -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -ffunction-sections -fdata-sections -static -Wl,--gc-sections
 
 BUILD     := build
 TEST_BIN  := $(BUILD)/test_core

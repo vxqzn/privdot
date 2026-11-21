@@ -130,23 +130,18 @@ void set_startup_enabled(bool enable) {
 
 // Renders a crisp, anti-aliased 32x32 ARGB privacy dot (or split pair) in memory.
 HICON create_dot_icon(SensorKind mask, bool mic_muted) {
-    constexpr int kSize = 32;
-    BITMAPV5HEADER bi{};
-    bi.bV5Size = sizeof(bi);
-    bi.bV5Width = kSize;
-    bi.bV5Height = -kSize; // top-down DIB
-    bi.bV5Planes = 1;
-    bi.bV5BitCount = 32;
-    bi.bV5Compression = BI_BITFIELDS;
-    bi.bV5RedMask = 0x00FF0000;
-    bi.bV5GreenMask = 0x0000FF00;
-    bi.bV5BlueMask = 0x000000FF;
-    bi.bV5AlphaMask = 0xFF000000;
+    static constexpr int kSize = 32;
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = kSize;
+    bi.bmiHeader.biHeight = -kSize; // top-down DIB
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
 
     void* bits = nullptr;
     HDC screen_dc = GetDC(nullptr);
-    HBITMAP color_bmp = CreateDIBSection(screen_dc, reinterpret_cast<BITMAPINFO*>(&bi),
-                                         DIB_RGB_COLORS, &bits, nullptr, 0);
+    HBITMAP color_bmp = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
     ReleaseDC(nullptr, screen_dc);
     if (color_bmp == nullptr || bits == nullptr) {
         return nullptr;
@@ -360,7 +355,8 @@ void TrayApp::add_tray_icon() {
     nid_.uID = kTrayIconId;
     nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid_.uCallbackMessage = kMsgTrayIcon;
-    nid_.hIcon = current_icon_;
+    nid_.hIcon =
+        (current_icon_ != nullptr) ? current_icon_ : LoadIconW(nullptr, IDI_APPLICATION);
     copy_tooltip(nid_.szTip, L"privdot");
     Shell_NotifyIconW(NIM_ADD, &nid_);
 }
