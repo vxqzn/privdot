@@ -7,7 +7,7 @@
 
 #include <windows.h>
 
-#include "win32/tray_app.hpp"
+#include "tray_app.hpp"
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\privdot_single_instance");

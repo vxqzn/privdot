@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/sensor_types.hpp"
+#include "sensor_types.hpp"
 
 #include <cstddef>
 #include <cstdint>

@@ -1,4 +1,4 @@
-#include "core/consent_parser.hpp"
+#include "../src/core/consent_parser.hpp"
 
 #include <iostream>
 #include <string>
@@ -61,7 +61,7 @@ int main() {
     CHECK(privdot::format_relative_time(now - 7'200, now) == "2h ago");
     CHECK(privdot::format_relative_time(now - 172'800, now) == "2d ago");
 
-    constexpr uint64_t base = privdot::kUnixEpochFileTime;
+    static constexpr uint64_t base = privdot::kUnixEpochFileTime;
     CHECK(privdot::format_duration(base + 10 * privdot::kTicksPerSecond, base) == "0s");
     CHECK(privdot::format_duration(base, base + 12 * privdot::kTicksPerSecond) == "12s");
     CHECK(privdot::format_duration(base, base + 125 * privdot::kTicksPerSecond) == "2m 05s");

@@ -7,59 +7,31 @@ Lightweight native Win32 **C++17** privacy indicator for Windows: displays live 
 
 ---
 
-## Architecture
+## Layout
 
 ```text
 privdot/
-├── Makefile                    # Linux/WSL unit tests + MinGW cross-build
-├── compile_flags.txt           # Portable clangd flags (-std=c++17, -Isrc)
 ├── .github/workflows/ci.yml    # GitHub Actions (Linux tests + MSVC Windows build)
+├── .gitignore
+├── Makefile                    # Linux/WSL unit tests + MinGW cross-build
+├── README.md
 ├── src/
 │   ├── core/                   # Portable ISO C++17 parser & state machine
-│   │   ├── sensor_types.hpp
-│   │   ├── consent_parser.hpp
-│   │   └── consent_parser.cpp
 │   └── win32/                  # Native Windows adapter (tray, menu, audio, watcher)
-│       ├── audio_mute.hpp/.cpp
-│       ├── consent_reader.hpp/.cpp
-│       ├── consent_watcher.hpp/.cpp
-│       ├── tray_app.hpp/.cpp
-│       └── main.cpp
 └── tests/
     └── test_core.cpp           # Zero-dependency core unit tests
 ```
 
 ---
 
-## Build & Run (Fresh Clone in WSL2 / Linux)
+## Build & Run (WSL2 / Linux)
 
 ```bash
-# 1. Core unit tests (GCC + ASan + UBSan) and formatting check
+# 1. Core unit tests (GCC + ASan + UBSan)
 make test
-make format-check
 
 # 2. Cross-compile privdot.exe from WSL2 (Ubuntu/Debian)
 sudo apt update && sudo apt install -y g++-mingw-w64-x86-64
 make win
 ./build/privdot.exe &
 ```
-
-### Optional: VS Code `clangd` Win32 IntelliSense in WSL2
-
-Add these machine-local files (gitignored) so `clangd` resolves `<windows.h>` inside `src/win32/`:
-
-* `.clangd`:
-  ```yaml
-  If:
-    PathMatch: src/win32/.*
-  CompileFlags:
-    Compiler: /usr/bin/x86_64-w64-mingw32-g++
-  ```
-* `.vscode/settings.json`:
-  ```json
-  {
-      "clangd.arguments": [
-          "--query-driver=/usr/bin/x86_64-w64-mingw32-g++"
-      ]
-  }
-  ```

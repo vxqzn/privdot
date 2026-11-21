@@ -1,4 +1,4 @@
-#include "core/consent_parser.hpp"
+#include "consent_parser.hpp"
 #include <algorithm>
 #include <utility>
 

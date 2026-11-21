@@ -10,7 +10,7 @@
 #include <endpointvolume.h>
 #include <mmdeviceapi.h>
 
-#include "win32/audio_mute.hpp"
+#include "audio_mute.hpp"
 
 namespace privdot::win32 {
 

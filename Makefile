@@ -1,16 +1,15 @@
 CXX       ?= g++
-CXXFLAGS  := -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -Isrc
+CXXFLAGS  := -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror
 SANFLAGS  := -g -fsanitize=address,undefined -fno-omit-frame-pointer
 
 WIN_CXX   := x86_64-w64-mingw32-g++
-WIN_FLAGS := -std=c++17 -Os -s -Wall -Wextra -Wpedantic -Werror -Isrc -static
+WIN_FLAGS := -std=c++17 -Os -s -Wall -Wextra -Wpedantic -Werror -ffunction-sections -fdata-sections -static -Wl,--gc-sections
 
 BUILD     := build
 TEST_BIN  := $(BUILD)/test_core
 APP_BIN   := $(BUILD)/privdot.exe
-SRCS      := $(wildcard src/core/*.hpp src/core/*.cpp src/win32/*.hpp src/win32/*.cpp tests/*.cpp)
 
-.PHONY: test win format format-check clean
+.PHONY: test win clean
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -25,12 +24,6 @@ test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 win: $(APP_BIN)
-
-format:
-	clang-format -i $(SRCS)
-
-format-check:
-	clang-format --dry-run --Werror $(SRCS)
 
 clean:
 	rm -rf $(BUILD)

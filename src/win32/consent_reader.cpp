@@ -9,8 +9,8 @@
 
 #include <tlhelp32.h>
 
-#include "core/consent_parser.hpp"
-#include "win32/consent_reader.hpp"
+#include "../core/consent_parser.hpp"
+#include "consent_reader.hpp"
 
 #include <cwchar>
 

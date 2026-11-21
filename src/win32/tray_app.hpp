@@ -11,8 +11,8 @@
 
 #include <shellapi.h>
 
-#include "core/sensor_types.hpp"
-#include "win32/consent_watcher.hpp"
+#include "../core/sensor_types.hpp"
+#include "consent_watcher.hpp"
 
 namespace privdot::win32 {
 

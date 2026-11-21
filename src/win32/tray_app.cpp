@@ -1,8 +1,8 @@
-#include "win32/tray_app.hpp"
+#include "tray_app.hpp"
 
-#include "core/consent_parser.hpp"
-#include "win32/audio_mute.hpp"
-#include "win32/consent_reader.hpp"
+#include "../core/consent_parser.hpp"
+#include "audio_mute.hpp"
+#include "consent_reader.hpp"
 
 #include <algorithm>
 #include <cmath>
