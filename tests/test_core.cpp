@@ -5,13 +5,21 @@
 #include <unordered_set>
 #include <vector>
 
+namespace {
+
+bool check_impl(bool cond, int line, const char* expr) {
+    if (!cond) {
+        std::cerr << "fail: line " << line << ": " << expr << '\n';
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 #define CHECK(expr)                                                                                \
-    do {                                                                                           \
-        if (!(expr)) {                                                                             \
-            std::cerr << "fail: line " << __LINE__ << ": " << #expr << '\n';                       \
-            return 1;                                                                              \
-        }                                                                                          \
-    } while (false)
+    if (!check_impl((expr), __LINE__, #expr))                                                      \
+    return 1
 
 int main() {
     CHECK(privdot::to_lower_ascii("Discord.EXE") == "discord.exe");

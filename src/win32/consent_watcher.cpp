@@ -77,7 +77,7 @@ void ConsentWatcher::run() {
         }
     }
 
-    while (true) {
+    for (;;) {
         for (size_t i = 0; i < keys.size(); ++i) {
             if (!armed[i]) {
                 const LONG rc = RegNotifyChangeKeyValue(
