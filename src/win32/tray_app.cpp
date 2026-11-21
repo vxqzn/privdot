@@ -39,7 +39,6 @@ struct Rgb {
 constexpr Rgb kColorMic{255, 159, 10};   // warm orange
 constexpr Rgb kColorCam{48, 209, 88};    // calm green
 constexpr Rgb kColorLoc{10, 132, 255};   // clean blue
-constexpr Rgb kColorWhite{255, 255, 255};
 constexpr Rgb kColorMuted{215, 75, 75};  // muted red
 constexpr Rgb kColorIdle{165, 170, 180}; // soft neutral grey
 
@@ -195,52 +194,6 @@ uint32_t pack_premultiplied(float r_sum, float g_sum, float b_sum, float a_sum, 
     return (pa << 24) | (pr << 16) | (pg << 8) | pb;
 }
 
-float tri_sign(float px, float py, float ax, float ay, float bx, float by) {
-    return (px - bx) * (ay - by) - (ax - bx) * (py - by);
-}
-
-bool point_in_triangle(float px, float py, float ax, float ay, float bx, float by, float cx,
-                       float cy) {
-    const float d1 = tri_sign(px, py, ax, ay, bx, by);
-    const float d2 = tri_sign(px, py, bx, by, cx, cy);
-    const float d3 = tri_sign(px, py, cx, cy, ax, ay);
-    const bool has_neg = (d1 < 0.0f) || (d2 < 0.0f) || (d3 < 0.0f);
-    const bool has_pos = (d1 > 0.0f) || (d2 > 0.0f) || (d3 > 0.0f);
-    return !(has_neg && has_pos);
-}
-
-bool in_glyph(SensorKind sensor, float u, float v) {
-    if (has_sensor(sensor, SensorKind::Mic)) {
-        // Capsule head centered on x=0
-        const bool mid = std::fabs(u) <= 0.15f && v >= -0.25f && v <= -0.09f;
-        const bool top = v < -0.25f && (u * u + (v + 0.25f) * (v + 0.25f)) <= 0.15f * 0.15f;
-        const bool bot = v > -0.09f && (u * u + (v + 0.09f) * (v + 0.09f)) <= 0.15f * 0.15f;
-        // Cradle U-arc, stem, and stand bar
-        const float cradle_r = std::sqrt(u * u + (v + 0.06f) * (v + 0.06f));
-        const bool cradle = v >= -0.06f && cradle_r >= 0.24f && cradle_r <= 0.34f;
-        const bool stem = std::fabs(u) <= 0.055f && v >= 0.26f && v <= 0.48f;
-        const bool base = std::fabs(u) <= 0.19f && v >= 0.44f && v <= 0.53f;
-        return mid || top || bot || cradle || stem || base;
-    }
-
-    if (has_sensor(sensor, SensorKind::Cam)) {
-        // Rounded camera body on left + lens trapezoid on right
-        const float rx = std::max(0.0f, std::fabs(u + 0.15f) - 0.24f);
-        const float ry = std::max(0.0f, std::fabs(v) - 0.18f);
-        const bool body = (rx * rx + ry * ry) <= 0.07f * 0.07f;
-        const bool lens = u >= 0.21f && u <= 0.50f && std::fabs(v) <= 0.11f + (u - 0.21f) * 0.62f;
-        return body || lens;
-    }
-
-    if (has_sensor(sensor, SensorKind::Location)) {
-        // NE diagonal location arrow
-        return point_in_triangle(u, v, 0.45f, -0.45f, -0.47f, -0.05f, -0.03f, 0.03f) ||
-               point_in_triangle(u, v, 0.45f, -0.45f, -0.03f, 0.03f, 0.05f, 0.47f);
-    }
-
-    return false;
-}
-
 std::vector<Rgb> collect_colors(SensorKind mask) {
     std::vector<Rgb> colors;
     if (has_sensor(mask, SensorKind::Cam)) {
@@ -255,7 +208,7 @@ std::vector<Rgb> collect_colors(SensorKind mask) {
     return colors;
 }
 
-// 4x4 supersampled colored badge with crisp white iOS sensor glyph at native menu DPI.
+// 4x4 supersampled smooth colored pill badge at native menu DPI.
 HBITMAP create_badge_bitmap(SensorKind sensor, int size) {
     uint32_t* pixels = nullptr;
     HBITMAP bmp = create_argb_dib(size, &pixels);
@@ -283,11 +236,12 @@ HBITMAP create_badge_bitmap(SensorKind sensor, int size) {
                         (static_cast<float>(x) + (static_cast<float>(sx) + 0.5f) * 0.25f) *
                             inv_size -
                         1.0f;
-                    if (u * u + v * v <= 0.88f * 0.88f) {
-                        const Rgb c = in_glyph(sensor, u, v) ? kColorWhite : bg;
-                        r_sum += static_cast<float>(c.r);
-                        g_sum += static_cast<float>(c.g);
-                        b_sum += static_cast<float>(c.b);
+                    const float clamped_u = std::clamp(u, -0.36f, 0.36f);
+                    const float du = u - clamped_u;
+                    if (du * du + v * v <= 0.34f * 0.34f) {
+                        r_sum += static_cast<float>(bg.r);
+                        g_sum += static_cast<float>(bg.g);
+                        b_sum += static_cast<float>(bg.b);
                         a_sum += 1.0f;
                     }
                 }
@@ -641,7 +595,7 @@ void TrayApp::refresh_state() {
                sensor_label(state_.recent[0].sensor) + ", " +
                format_relative_time(filetime_to_unix_seconds(latest), now_unix) + ")";
     } else if (mic_muted_) {
-        tip += " - mic muted";
+        tip += " - mic silenced";
     } else {
         tip += " - no active sensors";
     }
@@ -672,8 +626,7 @@ void TrayApp::show_menu() {
         AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0, L"Active right now");
         for (const auto& r : state_.active) {
             const int64_t start_unix = filetime_to_unix_seconds(r.last_used_start_ft);
-            const std::string line = format_app_label(r.display_name) + "\t" +
-                                     sensor_label(r.sensor) + " \xc2\xb7 active \xc2\xb7 " +
+            const std::string line = format_app_label(r.display_name) + "\tactive \xc2\xb7 " +
                                      format_relative_time(start_unix, now_unix);
             append_badge_item(menu, utf8_to_wide(line), badge_for_sensor(r.sensor));
         }
@@ -688,7 +641,6 @@ void TrayApp::show_menu() {
             const uint64_t latest = std::max(r.last_used_start_ft, r.last_used_stop_ft);
             const int64_t latest_unix = filetime_to_unix_seconds(latest);
             std::string line = format_app_label(r.display_name) + "\t" +
-                               sensor_label(r.sensor) + " \xc2\xb7 " +
                                format_relative_time(latest_unix, now_unix);
             if (r.last_used_stop_ft > r.last_used_start_ft &&
                 (r.last_used_stop_ft - r.last_used_start_ft) >= kTicksPerSecond) {
@@ -699,8 +651,10 @@ void TrayApp::show_menu() {
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0,
+                L"Orange: mic \u00b7 Green: camera \u00b7 Blue: location");
     AppendMenuW(menu, MF_STRING | (mic_muted_ ? MF_CHECKED : MF_UNCHECKED), kCmdToggleMute,
-                L"Mute microphone");
+                L"Silence microphone");
     AppendMenuW(menu, MF_STRING | (show_location_ ? MF_CHECKED : MF_UNCHECKED), kCmdToggleLocation,
                 L"Show location activity");
     AppendMenuW(menu, MF_STRING | (is_startup_enabled() ? MF_CHECKED : MF_UNCHECKED),
