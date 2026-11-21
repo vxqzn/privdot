@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,6 +20,7 @@ namespace {
 
 constexpr UINT kMsgTrayIcon = WM_APP + 1;
 constexpr UINT kMsgConsentChanged = WM_APP + 2;
+constexpr UINT kMsgAudioChanged = WM_APP + 3;
 constexpr UINT_PTR kTimerActiveCheck = 1;
 constexpr UINT kTrayIconId = 1;
 
@@ -381,6 +383,7 @@ void append_badge_item(HMENU menu, const std::wstring& text, HBITMAP badge) {
 
 TrayApp::~TrayApp() {
     watcher_.stop();
+    audio_watcher_.stop();
     remove_tray_icon();
     if (current_icon_ != nullptr) {
         DestroyIcon(current_icon_);
@@ -421,6 +424,7 @@ bool TrayApp::init(HINSTANCE instance) {
     }
 
     add_tray_icon();
+    audio_watcher_.start(hwnd_, kMsgAudioChanged);
     refresh_state();
     watcher_.start(hwnd_, kMsgConsentChanged);
     return true;
@@ -485,6 +489,13 @@ LRESULT TrayApp::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
         refresh_state();
         return 0;
 
+    case kMsgAudioChanged:
+        if (wp != 0) {
+            audio_watcher_.rescan_endpoints();
+        }
+        refresh_state();
+        return 0;
+
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case kCmdToggleMute:
@@ -512,6 +523,7 @@ LRESULT TrayApp::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
             timer_active_ = false;
         }
         watcher_.stop();
+        audio_watcher_.stop();
         remove_tray_icon();
         PostQuitMessage(0);
         return 0;
@@ -554,11 +566,16 @@ void TrayApp::refresh_state() {
             records.end());
     }
 
-    const auto alive = get_alive_process_names_lower();
-    state_ = build_indicator_state(std::move(records), alive, 8);
+    const auto snap = take_process_snapshot();
+    const uint64_t now_ft = current_filetime();
+    auto wasapi_records = audio_watcher_.collect_records(snap.name_by_pid, now_ft);
+    records.insert(records.end(), std::make_move_iterator(wasapi_records.begin()),
+                   std::make_move_iterator(wasapi_records.end()));
+
+    state_ = build_indicator_state(std::move(records), snap.alive_lower, 8);
     mic_muted_ = is_mic_muted().value_or(false);
 
-    const int64_t now_unix = filetime_to_unix_seconds(current_filetime());
+    const int64_t now_unix = filetime_to_unix_seconds(now_ft);
     recent_mask_ = recent_grace_mask(state_, now_unix);
 
     // Run 15s fallback timer only while active or in 5m post-use grace window (0.00% idle CPU).

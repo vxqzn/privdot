@@ -12,6 +12,7 @@
 #include <shellapi.h>
 
 #include "../core/sensor_types.hpp"
+#include "audio_watcher.hpp"
 #include "consent_watcher.hpp"
 
 namespace privdot::win32 {
@@ -47,6 +48,7 @@ class TrayApp {
     UINT taskbar_created_msg_{0};
 
     ConsentWatcher watcher_;
+    AudioWatcher audio_watcher_;
     IndicatorState state_;
     SensorKind recent_mask_{SensorKind::None};
     bool mic_muted_{false};

@@ -27,7 +27,7 @@ jobs:
         run: cl /nologo /std:c++17 /EHsc /W4 /WX src/core/consent_parser.cpp tests/test_core.cpp /Fe:test_core.exe && test_core.exe
       - name: Build privdot.exe (MSVC)
         shell: cmd
-        run: cl /nologo /std:c++17 /O1 /EHsc /W4 /WX /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 src/core/consent_parser.cpp src/win32/consent_reader.cpp src/win32/consent_watcher.cpp src/win32/audio_mute.cpp src/win32/tray_app.cpp src/win32/main.cpp advapi32.lib ole32.lib shell32.lib user32.lib gdi32.lib /Fe:privdot.exe /link /SUBSYSTEM:WINDOWS
+        run: cl /nologo /std:c++17 /O1 /EHsc /W4 /WX /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 src/core/consent_parser.cpp src/win32/consent_reader.cpp src/win32/consent_watcher.cpp src/win32/audio_mute.cpp src/win32/audio_watcher.cpp src/win32/tray_app.cpp src/win32/main.cpp advapi32.lib ole32.lib shell32.lib user32.lib gdi32.lib /Fe:privdot.exe /link /SUBSYSTEM:WINDOWS
       - name: Upload privdot.exe artifact
         uses: actions/upload-artifact@v4
         with:

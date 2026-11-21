@@ -17,8 +17,8 @@ $(BUILD):
 $(TEST_BIN): src/core/consent_parser.cpp src/core/consent_parser.hpp src/core/sensor_types.hpp tests/test_core.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(SANFLAGS) src/core/consent_parser.cpp tests/test_core.cpp -o $(TEST_BIN)
 
-$(APP_BIN): src/core/consent_parser.cpp src/core/consent_parser.hpp src/core/sensor_types.hpp src/win32/consent_reader.cpp src/win32/consent_reader.hpp src/win32/consent_watcher.cpp src/win32/consent_watcher.hpp src/win32/audio_mute.cpp src/win32/audio_mute.hpp src/win32/tray_app.cpp src/win32/tray_app.hpp src/win32/main.cpp | $(BUILD)
-	$(WIN_CXX) $(WIN_FLAGS) -mwindows src/core/consent_parser.cpp src/win32/consent_reader.cpp src/win32/consent_watcher.cpp src/win32/audio_mute.cpp src/win32/tray_app.cpp src/win32/main.cpp -ladvapi32 -lole32 -lshell32 -luser32 -lgdi32 -o $(APP_BIN)
+$(APP_BIN): src/core/consent_parser.cpp src/core/consent_parser.hpp src/core/sensor_types.hpp src/win32/consent_reader.cpp src/win32/consent_reader.hpp src/win32/consent_watcher.cpp src/win32/consent_watcher.hpp src/win32/audio_mute.cpp src/win32/audio_mute.hpp src/win32/audio_watcher.cpp src/win32/audio_watcher.hpp src/win32/tray_app.cpp src/win32/tray_app.hpp src/win32/main.cpp | $(BUILD)
+	$(WIN_CXX) $(WIN_FLAGS) -mwindows src/core/consent_parser.cpp src/win32/consent_reader.cpp src/win32/consent_watcher.cpp src/win32/audio_mute.cpp src/win32/audio_watcher.cpp src/win32/tray_app.cpp src/win32/main.cpp -ladvapi32 -lole32 -lshell32 -luser32 -lgdi32 -o $(APP_BIN)
 
 test: $(TEST_BIN)
 	./$(TEST_BIN)

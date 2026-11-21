@@ -131,23 +131,27 @@ std::vector<AccessRecord> read_all_consent_records() {
     return records;
 }
 
-std::unordered_set<std::string> get_alive_process_names_lower() {
-    std::unordered_set<std::string> names;
+ProcessSnapshot take_process_snapshot() {
+    ProcessSnapshot result;
     HandleGuard snap(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
     if (snap.h == INVALID_HANDLE_VALUE) {
-        return names;
+        return result;
     }
 
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
     if (!Process32FirstW(snap.h, &entry)) {
-        return names;
+        return result;
     }
     do {
-        names.insert(to_lower_ascii(wide_to_utf8(entry.szExeFile)));
+        std::string exe = wide_to_utf8(entry.szExeFile);
+        if (!exe.empty()) {
+            result.alive_lower.insert(to_lower_ascii(exe));
+            result.name_by_pid.emplace(static_cast<uint32_t>(entry.th32ProcessID), std::move(exe));
+        }
     } while (Process32NextW(snap.h, &entry));
 
-    return names;
+    return result;
 }
 
 uint64_t current_filetime() {
