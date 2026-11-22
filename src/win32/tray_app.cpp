@@ -411,6 +411,8 @@ bool TrayApp::init(HINSTANCE instance) {
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = &TrayApp::wnd_proc;
     wc.hInstance = instance_;
+    wc.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(1));
+    wc.hIconSm = wc.hIcon;
     wc.lpszClassName = L"privdot_tray_window";
     if (!RegisterClassExW(&wc)) {
         return false;
