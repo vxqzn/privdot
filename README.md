@@ -1,11 +1,10 @@
 # privdot
 
-Lightweight native Win32 **C++17** privacy indicator for Windows: displays live **microphone**, **camera**, and **location** access in the system tray, tracks a **Recently used** app timeline in a native Windows 11 dark menu, and toggles hardware microphone mute in one click.
+Native Win32 **C++17** system-tray sensor monitor for Windows 10/11 covering live **microphone**, **camera**, and **location** access, a 5-minute post-use grace ring, recent-activity timeline, and 1-click hardware microphone mute.
 
-* **Zero external runtime dependencies:** pure Win32 API, COM Core Audio, and GDI/DIB icon rendering (`~220 KB` static MinGW build, `< 180 KB` MSVC build, `~2–4 MB` RAM).
-* **0.00% idle CPU:** wakes on kernel registry events via `RegNotifyChangeKeyValue` and enables a 15s process-liveness timer only while a sensor is active.
-
----
+* **Footprint:** `238 KB` static MinGW binary (`-Os -s -Wl,--gc-sections`), zero external runtime DLLs (Win32, COM Core Audio, and GDI DIB rendering only).
+* **Idle overhead:** `0.00%` idle CPU — wakes strictly on kernel registry notifications (`RegNotifyChangeKeyValue`) and WASAPI COM session/endpoint callbacks (`IAudioSessionManager2`, `IMMNotificationClient`). An adaptive 15 s liveness timer runs only while a sensor is active or within the 5-minute grace window.
+* **Dual mic telemetry:** Merges Windows `CapabilityAccessManager\ConsentStore` (mic, camera, location, history) with live WASAPI `eCapture` sessions across all active capture endpoints to catch Win32/Electron apps (e.g., Discord) omitted by `ConsentStore`.
 
 ## Layout
 
@@ -13,25 +12,20 @@ Lightweight native Win32 **C++17** privacy indicator for Windows: displays live 
 privdot/
 ├── .github/workflows/ci.yml    # GitHub Actions (Linux tests + MSVC Windows build)
 ├── .gitignore
-├── Makefile                    # Linux/WSL unit tests + MinGW cross-build
+├── Makefile                    # Core tests + static MinGW cross-build
 ├── README.md
 ├── src/
 │   ├── core/                   # Portable ISO C++17 parser & state machine
-│   └── win32/                  # Native Windows adapter (tray, menu, audio, watcher)
+│   └── win32/                  # Native Windows adapter (tray, audio_watcher.*, mute, consent)
 └── tests/
     └── test_core.cpp           # Zero-dependency core unit tests
 ```
 
----
-
-## Build & Run (WSL2 / Linux)
+## Build & Install
 
 ```bash
-# 1. Core unit tests (GCC + ASan + UBSan)
-make test
-
-# 2. Cross-compile privdot.exe from WSL2 (Ubuntu/Debian)
-sudo apt update && sudo apt install -y g++-mingw-w64-x86-64
-make win
-./build/privdot.exe &
+make test                       # Core unit tests (GCC + ASan + UBSan)
+make win                        # Static x64 binary -> build/privdot.exe
 ```
+
+Install `build/privdot.exe` to `%LOCALAPPDATA%\privdot\privdot.exe` and launch directly from the Windows desktop session.
